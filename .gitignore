@@ -1,0 +1,43 @@
+# Harness omp (piani e stato di sessione)
+.omp/
+
+# Segreti: si versiona solo il template (§10.4)
+.env
+.env.*
+!.env.example
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / Next.js (dashboard)
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Volumi e dati locali (stato in Docker, mai nel repo)
+pgdata/
+ollama/
+*.dump
+
+# Editor e sistema operativo
+.idea/
+.vscode/
+*.swp
+.DS_Store
