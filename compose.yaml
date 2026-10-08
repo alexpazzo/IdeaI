@@ -1,0 +1,176 @@
+# IdeaI — stato (Postgres+pgvector) e applicazione. L'inferenza locale resta nativa
+# sull'host e viene raggiunta via host.docker.internal (§10.2); il profilo `local-llm`
+# avvia anche Ollama in container per chi lo preferisce.
+#
+# Nota sull'entrypoint: l'immagine applicativa ha ENTRYPOINT ["uv","run","ideai"], quindi
+# `command:` riceve direttamente il sottocomando (`db upgrade`, `worker …`, `doctor`).
+# Il servizio `api` sovrascrive `entrypoint` perché non è un sottocomando della CLI.
+
+x-llm-backends: &llm-backends '{"local":{"type":"ollama_native","base_url":"http://host.docker.internal:11434","api_key_env":null,"timeout_s":120,"max_concurrency":2,"rpm":null},"deepseek":{"type":"openai_compat","base_url":"https://api.deepseek.com/v1","api_key_env":"DEEPSEEK_API_KEY","timeout_s":60,"max_concurrency":4,"rpm":null},"anthropic":{"type":"anthropic","base_url":"https://api.anthropic.com","api_key_env":"ANTHROPIC_API_KEY","timeout_s":60,"max_concurrency":4,"rpm":null}}'
+
+x-app-env: &app-env
+  IDEAI_DATABASE_URL: postgresql+asyncpg://ideai:ideai@postgres:5432/ideai
+  IDEAI_API_BASE_URL: http://api:8000
+  IDEAI_LLM_BACKENDS: *llm-backends
+  IDEAI_SALT: ${IDEAI_SALT:-change-me}
+  IDEAI_API_KEY: ${IDEAI_API_KEY:-change-me}
+
+x-reddit-env: &reddit-env
+  IDEAI_REDDIT_CLIENT_ID: ${IDEAI_REDDIT_CLIENT_ID:-}
+  IDEAI_REDDIT_CLIENT_SECRET: ${IDEAI_REDDIT_CLIENT_SECRET:-}
+  IDEAI_REDDIT_USER_AGENT: ${IDEAI_REDDIT_USER_AGENT:-}
+
+x-env-file: &env-file
+  - path: .env
+    required: false
+
+# Su Linux `host.docker.internal` non esiste di default: questo lo mappa sull'host.
+x-llm-hosts: &llm-hosts
+  - "host.docker.internal:host-gateway"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ideai
+      POSTGRES_PASSWORD: ideai
+      POSTGRES_DB: ideai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ideai -d ideai"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    image: ideai:local
+    command: ["db", "upgrade"]
+    env_file: *env-file
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: ideai:local
+    entrypoint: ["uv", "run", "uvicorn", "ideai.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: *env-file
+    environment: *app-env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts: *llm-hosts
+    restart: unless-stopped
+
+  worker-ingest:
+    build: .
+    image: ideai:local
+    command: ["worker", "--topics", "pipeline.scrape,pipeline.watch"]
+    env_file: *env-file
+    environment:
+      <<: [*app-env, *reddit-env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts: *llm-hosts
+    restart: unless-stopped
+
+  worker-llm:
+    build: .
+    image: ideai:local
+    command: ["worker", "--topics", "pipeline.triage,pipeline.cluster,pipeline.analyze,maintenance.reembed"]
+    env_file: *env-file
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts: *llm-hosts
+    restart: unless-stopped
+
+  worker-misc:
+    build: .
+    image: ideai:local
+    command: ["worker", "--topics", "pipeline.score,maintenance.retention"]
+    env_file: *env-file
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    image: ideai:local
+    command: ["scheduler"]
+    env_file: *env-file
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    image: ideai-dashboard:local
+    environment:
+      IDEAI_API_BASE_URL: http://api:8000
+      IDEAI_API_KEY: ${IDEAI_API_KEY:-change-me}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  bootstrap:
+    build: .
+    image: ideai:local
+    command: ["doctor"]
+    env_file: *env-file
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts: *llm-hosts
+    restart: "no"
+
+  # Profilo opzionale: inferenza locale anche in container (altrimenti usa Ollama sull'host).
+  ollama:
+    image: ollama/ollama
+    profiles: ["local-llm"]
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    restart: unless-stopped
+    # GPU NVIDIA: richiede nvidia-container-toolkit; decommentare per abilitarla.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # Per AMD/ROCm usare l'immagine `ollama/ollama:rocm`.
+
+volumes:
+  pgdata:
+  ollama:

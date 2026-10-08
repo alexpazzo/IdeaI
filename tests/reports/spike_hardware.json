@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-10-07T19:58:54.803558+00:00",
+  "dry_run": false,
+  "subreddit": null,
+  "fields_read": [
+    "items.state",
+    "items.category",
+    "items.triage_confidence",
+    "llm_calls.status",
+    "ollama eval_count/eval_duration (diagnostica diretta)"
+  ],
+  "notes": "misura reale su contenuto registrato (tests/fixtures/reddit): tok/s da eval_count/eval_duration di Ollama; schema_compliance da llm_calls.status delle classificazioni del run",
+  "data_source": "fixtures",
+  "model": "local/qwen3:8b",
+  "tokens_per_second": 33.92,
+  "tokens_per_second_simulated": false,
+  "tokens_per_second_detail": {
+    "measured": true,
+    "diagnostic": "POST /api/chat diretto (fuori dal gateway)",
+    "eval_count": 64,
+    "eval_duration_ns": 1887070000,
+    "prompt_eval_count": 30
+  },
+  "schema_compliance": 1.0,
+  "schema_compliance_source": "llm_calls.status (role='triage')",
+  "classifications_attempted": 20,
+  "classifications_failed": 0,
+  "llm_calls_triage": 2,
+  "items_read": 100,
+  "items_persisted": 100,
+  "persisted": true
+}
